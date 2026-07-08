@@ -245,7 +245,7 @@ def momentum_scalp(prices: pd.Series, burst: int = 6, vol_window: int = 60,
 # ===========================================================================
 
 @strategy("trend_ride", min_bars=45)
-def trend_ride(prices: pd.Series, fast: int = 10, slow: int = 40,
+def trend_ride(prices: pd.Series, fast: int = 9, slow: int = 20,
                band_k: float = 0.5) -> "Signal | None":
     """Minutes-to-hours trend rider: long/short while EMA30/EMA120 (≈5/20 min @10s) clearly diverge, flat inside the volatility dead-band."""
     ef = float(ind.ema(prices, fast).iloc[-1])
