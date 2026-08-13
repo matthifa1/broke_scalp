@@ -317,7 +317,105 @@ def extreme_bounce(prices: pd.Series, k: int = 3, extent: int = 36, vol_window: 
 
 
 # ===========================================================================
-# Short-term strategy #6 — Bollinger band fade (mean reversion, ~minutes).
+# Short-term strategy #6 — ping pong (range fade between rolling high/low).
+# ===========================================================================
+
+@strategy("ping_pong", min_bars=70)
+def ping_pong(prices: pd.Series, window: int = 360, band_frac: float = 0.15,
+              vol_window: int = 60, min_range_k: float = 8.0,
+              trend_lag: int = 60, trend_k: float = 0.5) -> "Signal | None":
+    """Range fade: sells within x of the rolling high, buys within x of the rolling low; closes at the opposite band (profit) or past the entry band (breakout stop). Entries against a drifting range are filtered, and a closed side stays blocked until price crosses back through mid-range."""
+    p = prices.iloc[-1500:].reset_index(drop=True)
+    hi = p.rolling(window, min_periods=vol_window).max()
+    lo = p.rolling(window, min_periods=vol_window).min()
+    mid = (hi + lo) / 2
+    vol = _bar_vol(p, vol_window)
+
+    def bands(i):
+        v = vol.iloc[i]
+        if pd.isna(v) or v <= 0 or pd.isna(hi.iloc[i]):
+            return None
+        h, l = float(hi.iloc[i]), float(lo.iloc[i])
+        rng = h - l
+        # A range narrower than a few bars of noise isn't a range — the two
+        # bands would overlap and every tick would look like an extreme.
+        if rng < min_range_k * float(v):
+            return None
+        return h, l, band_frac * rng
+
+    def trend(i):
+        # Drift of the range midline: +1 migrating up, -1 down, 0 stationary.
+        # A stationary range keeps its midline flat wherever price sits in the
+        # cycle, so unlike an EMA gap this doesn't veto the fades themselves.
+        j = i - trend_lag
+        if j < 0 or pd.isna(mid.iloc[j]) or pd.isna(mid.iloc[i]):
+            return 0
+        v = vol.iloc[i]
+        if pd.isna(v) or v <= 0:
+            return 0
+        drift = float(mid.iloc[i]) - float(mid.iloc[j])
+        band = trend_k * float(v) * (trend_lag ** 0.5)
+        return 1 if drift > band else -1 if drift < -band else 0
+
+    # After a close, the same side is blocked until price has been back in
+    # mid-range — otherwise a stopped-out short re-shorts the breakout on the
+    # very next bar. _replay walks bars in order, so a closure cell suffices.
+    blocked = [None]
+
+    def try_enter(i):
+        b = bands(i)
+        if b is None:
+            return None
+        h, l, x = b
+        cur = float(p.iloc[i])
+        if l + x < cur < h - x:
+            blocked[0] = None             # crossed mid-range: both sides re-armed
+            return None
+        t = trend(i)
+        if cur >= h - x and t <= 0 and blocked[0] != "short":
+            return "short"                # near the top → fade back down
+        if cur <= l + x and t >= 0 and blocked[0] != "long":
+            return "long"                 # near the bottom → fade back up
+        return None
+
+    def should_exit(i, side, entry_bar, entry_price):
+        def close(reason):
+            blocked[0] = side
+            return reason
+
+        b_now, b_entry = bands(i), bands(entry_bar)
+        if b_now is None or b_entry is None:
+            return close("range collapsed")   # no longer a tradeable range
+        h, l, x = b_now
+        h0, l0, x0 = b_entry
+        cur = float(p.iloc[i])
+        pnl = cur - entry_price if side == "long" else entry_price - cur
+        if side == "short":
+            if cur <= l + x:
+                return close(f"reached the low band ({pnl:+.4f})")
+            if cur > h0 + x0:
+                return close(f"breakout above the range — stop ({pnl:+.4f})")
+        else:
+            if cur >= h - x:
+                return close(f"reached the high band ({pnl:+.4f})")
+            if cur < l0 - x0:
+                return close(f"breakdown below the range — stop ({pnl:+.4f})")
+        return None
+
+    side, entry_bar, entry_price, exit_bar, why = _replay(
+        p, vol_window + 1, try_enter, should_exit)
+    last = len(p) - 1
+    b = bands(last)
+    extras = {"high": b[0], "low": b[1], "x": b[2]} if b else {}
+    if side is not None:
+        return _hold_signal(side, entry_price, last - entry_bar, extras)
+    if exit_bar == last:
+        return Signal("close", f"closing: {why}", 0.0, extras)
+    return Signal("close", "flat — price is mid-range, waiting for either band", 0.0, extras)
+
+
+# ===========================================================================
+# Short-term strategy #7 — Bollinger band fade (mean reversion, ~minutes).
 # ===========================================================================
 
 @strategy("bb_fade", min_bars=70)

@@ -32,7 +32,7 @@ chrome.exe --remote-debugging-port=9222
 
 ```bash
 python -m broke_scalp collect      [--instrument TSLA] [--poll 10] [--interval N] [--strategy NAME]
-python -m broke_scalp trade        [--instrument TSLA] [--size 25] [--poll 10] [--strategy NAME] [--live]
+python -m broke_scalp trade        [--instrument TSLA] [--size 25] [--interval N] [--poll 10] [--strategy NAME] [--live]
 python -m broke_scalp view         [--instrument TSLA] [--limit 100] [--delete]
 python -m broke_scalp indicators   [--instrument TSLA] [--strategy NAME]
 python -m broke_scalp strategies
